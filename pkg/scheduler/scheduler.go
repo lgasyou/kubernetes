@@ -742,11 +742,19 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 }
 
 func (sched *Scheduler) profileForPod(pod *v1.Pod) (*profile.Profile, error) {
-	prof, ok := sched.Profiles[pod.Spec.SchedulerName]
-	if !ok {
-		return nil, fmt.Errorf("profile not found for scheduler name %q", pod.Spec.SchedulerName)
+	if prof, ok := sched.Profiles[pod.Spec.SchedulerName]; ok {
+		return prof, nil
 	}
-	return prof, nil
+
+	if name, ok := pod.Labels[LabelSchedulerName]; ok {
+		prof, ok := sched.Profiles[name]
+		klog.V(3).Infof("get scheduler from label %s: %s", pod.Name, prof)
+		if ok {
+			return prof, nil
+		}
+	}
+
+	return nil, fmt.Errorf("profile not found for scheduler name %q", pod.Spec.SchedulerName)
 }
 
 // skipPodSchedule returns true if we could skip scheduling the pod for specified cases.
@@ -764,6 +772,21 @@ func (sched *Scheduler) skipPodSchedule(prof *profile.Profile, pod *v1.Pod) bool
 	if sched.skipPodUpdate(pod) {
 		return true
 	}
+
+	updatedPod, err := sched.SchedulerCache.GetPod(pod)
+	if err != nil {
+		klog.Errorf("failed to get assumed pod %s/%s from cache: %v", pod.Namespace, pod.Name, err)
+		return true
+	}
+
+	// Case 3: the scheduler responses for it has been changed
+	if !ResponsibleForPodByLabel(updatedPod, sched.Profiles) {
+		klog.V(3).Infof("skipped pod %v because its scheduler has been changed", updatedPod.Name)
+		return true
+	}
+
+	klog.V(3).Infof("old pod label: %s", pod.Labels[LabelSchedulerName])
+	klog.V(3).Info("new pod label: %s", updatedPod.Labels[LabelSchedulerName])
 
 	return false
 }

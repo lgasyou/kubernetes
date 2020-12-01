@@ -34,6 +34,10 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/profile"
 )
 
+const (
+	LabelSchedulerName = "linc/schedulerName"
+)
+
 func (sched *Scheduler) onPvAdd(obj interface{}) {
 	// Pods created when there are no PVs available will be stuck in
 	// unschedulable queue. But unbound PVs created for static provisioning and
@@ -295,7 +299,18 @@ func assignedPod(pod *v1.Pod) bool {
 
 // responsibleForPod returns true if the pod has asked to be scheduled by the given scheduler.
 func responsibleForPod(pod *v1.Pod, profiles profile.Map) bool {
-	return profiles.HandlesSchedulerName(pod.Spec.SchedulerName)
+	return profiles.HandlesSchedulerName(pod.Spec.SchedulerName) || ResponsibleForPodByLabel(pod, profiles)
+}
+
+// this function is used for dynamically scheduling
+func ResponsibleForPodByLabel(pod *v1.Pod, profiles profile.Map) bool {
+	// checks by labels.linc/schedulerName.
+	var responsible = false
+	if name, ok := pod.Labels[LabelSchedulerName]; ok {
+		responsible = profiles.HandlesSchedulerName(name)
+	}
+	klog.V(3).Infof("is scheduler responsible for %s? %s", pod.Name, responsible)
+	return responsible
 }
 
 // skipPodUpdate checks whether the specified pod update should be ignored.
